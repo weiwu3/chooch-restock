@@ -1,0 +1,63 @@
+{
+  "scenarios": [
+    {
+      "name": "success",
+      "http_status": 201,
+      "response_body": {
+        "erp_order_id": "ERP-7001",
+        "status": "accepted",
+        "duplicate": false
+      },
+      "expected_classification": "success"
+    },
+    {
+      "name": "duplicate_idempotency_key",
+      "http_status": 200,
+      "response_body": {
+        "erp_order_id": "ERP-7001",
+        "status": "accepted",
+        "duplicate": true
+      },
+      "expected_classification": "success"
+    },
+    {
+      "name": "rate_limited",
+      "http_status": 429,
+      "response_headers": {
+        "Retry-After": "2"
+      },
+      "response_body": {
+        "error": "rate_limited"
+      },
+      "expected_classification": "retryable"
+    },
+    {
+      "name": "temporary_failure",
+      "http_status": 503,
+      "response_body": {
+        "error": "temporarily_unavailable"
+      },
+      "expected_classification": "retryable"
+    },
+    {
+      "name": "permanent_rejection",
+      "http_status": 422,
+      "response_body": {
+        "error": "unknown_sku",
+        "message": "The ERP does not recognize the supplied SKU."
+      },
+      "expected_classification": "non_retryable"
+    },
+    {
+      "name": "timeout_after_accept",
+      "logical_result": {
+        "erp_order_id": "ERP-7002",
+        "status": "accepted"
+      },
+      "transport_behavior": "disconnect_before_response",
+      "next_same_key_behavior": "return_duplicate_idempotency_key",
+      "expected_classification": "ambiguous_retry_with_same_idempotency_key"
+    }
+  ]
+}
+

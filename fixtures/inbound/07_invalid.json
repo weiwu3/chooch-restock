@@ -1,0 +1,12 @@
+{
+  "event_id": "evt_invalid_01",
+  "source": "vision-room-gateway",
+  "facility_id": "FAC-101",
+  "sku": "MED-30224",
+  "observed_at": "not-a-timestamp",
+  "observed_quantity": -3,
+  "par_level": 5,
+  "reorder_point": 8,
+  "confidence": 1.4
+}
+

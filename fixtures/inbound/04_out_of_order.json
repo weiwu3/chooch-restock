@@ -1,0 +1,18 @@
+{
+  "event_id": "evt_0999",
+  "source": "vision-room-gateway",
+  "facility_id": "FAC-101",
+  "room_id": "ROOM-3A",
+  "sku": "MED-30224",
+  "observed_at": "2026-08-18T19:10:00Z",
+  "observed_quantity": 2,
+  "par_level": 12,
+  "reorder_point": 5,
+  "confidence": 0.91,
+  "camera_id": "CAM-3A-07",
+  "metadata": {
+    "snapshot_id": "snap_8835",
+    "correlation_id": "corr_4999"
+  }
+}
+

@@ -1,0 +1,18 @@
+{
+  "event_id": "evt_2001",
+  "source": "vision-room-gateway",
+  "facility_id": "FAC-101",
+  "room_id": "ROOM-4B",
+  "sku": "MED-40230",
+  "observed_at": "2026-08-18T20:15:00.000Z",
+  "observed_quantity": 2,
+  "par_level": 10,
+  "reorder_point": 3,
+  "confidence": 0.93,
+  "camera_id": "CAM-4B-02",
+  "metadata": {
+    "snapshot_id": "snap_9201",
+    "correlation_id": "corr_6001"
+  }
+}
+
