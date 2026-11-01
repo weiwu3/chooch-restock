@@ -1,0 +1,489 @@
+<!doctype html>
+{#- The operations page. restock/page.py builds every row and card and holds every chip; this
+    template lays them out and holds the fixed text. Top to bottom: the title with the
+    glossary (collapsed; it prints page.py's chip table), one line with the time of the last
+    update, the stale banner, the three numbers, Needs a person, On their way, the bin cards
+    and the links for engineers. The script at the end refreshes the page every 1.5 seconds,
+    shows every time in the browser's own time zone, and runs the Retry buttons. #}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>restock: supply-room stock and orders</title>
+{#- Changes whenever this template does; the refresh reloads the whole page when the
+    server's copy differs, so a tab left open picks up a new script and styles. #}
+<meta name="page-version" content="{{ page_version }}">
+<style>
+  :root {
+    --text: #1f2328; --muted: #5b6670; --line: #e1e5e9; --panel: #f6f7f9; --link: #2a5db0;
+    --good: #2e9d57; --good-bg: #e7f4ec; --good-text: #1b6337;
+    --waiting: #d99a1e; --waiting-bg: #fcf1db; --waiting-text: #774f00;
+    --attention: #c8372d; --attention-bg: #fce7e5; --attention-text: #a1251e;
+    --quiet: #8a939c; --quiet-bg: #eef0f2; --quiet-text: #4b5560;
+  }
+  * { box-sizing: border-box; }
+  html { overflow-anchor: none; } /* the refresh keeps the reader's place itself (keepPlace) */
+  body { font: 16px/1.45 system-ui, sans-serif; max-width: 1100px; margin: 0 auto; padding: 24px 16px 32px; color: var(--text); background: #fff; }
+  a { color: var(--link); }
+  p, h1, h2, h3 { margin: 0; }
+  h1 { font-size: 24px; line-height: 1.25; }
+  h2 { font-size: 19px; margin-bottom: 10px; }
+  .muted { color: var(--muted); }
+  .top { position: relative; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 24px; }
+  .subtitle { margin-top: 4px; color: var(--muted); }
+  .banner { margin-top: 12px; padding: 8px 12px; border-radius: 8px; background: var(--attention-bg); color: var(--attention-text); font-weight: 600; }
+  body.stale section, body.stale .summary { opacity: .5; }
+
+  /* The chip on every row and card; page.py picks the colour class. */
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 8px; border-radius: 999px; font-size: 14px; font-weight: 600; line-height: 1.5; white-space: nowrap; }
+  .chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; }
+  .chip.good { background: var(--good-bg); color: var(--good-text); }
+  .chip.good::before { background: var(--good); }
+  .chip.waiting { background: var(--waiting-bg); color: var(--waiting-text); }
+  .chip.waiting::before { background: var(--waiting); }
+  .chip.attention { background: var(--attention-bg); color: var(--attention-text); }
+  .chip.attention::before { background: var(--attention); }
+  .chip.quiet { background: var(--quiet-bg); color: var(--quiet-text); }
+  .chip.quiet::before { background: var(--quiet); }
+
+  /* The glossary opens as a panel under the title line, over the page. */
+  #glossary > summary { cursor: pointer; color: var(--link); list-style: none; }
+  #glossary > summary::-webkit-details-marker { display: none; }
+  #glossary .panel { position: absolute; z-index: 10; right: 0; top: calc(100% + 8px); width: min(31rem, 100%); padding: 14px 18px; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 30px rgb(31 35 40 / 16%); }
+  #glossary dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 10px 14px; align-items: baseline; margin: 0; font-size: 15px; }
+  #glossary dd { margin: 0; }
+  .sample { font-weight: 600; }
+  .sample.small { font-size: 14px; font-weight: 400; color: var(--muted); }
+  .sample.button { padding: 1px 10px; border: 1px solid #b6bec6; border-radius: 6px; font-size: 14px; }
+
+  /* The three numbers. */
+  .summary { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+  .tile { display: flex; align-items: baseline; gap: 10px; min-width: 190px; padding: 10px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); text-decoration: none; }
+  .tile:hover { border-color: #b6bec6; }
+  .tile b { font-size: 28px; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .tile.attention { background: var(--attention-bg); border-color: #f1c2bd; }
+  .tile.attention b { color: var(--attention-text); }
+  .tile.waiting b { color: var(--waiting-text); }
+
+  section { margin-top: 32px; }
+  .none { color: var(--muted); }
+
+  /* The rows of Needs a person and On their way: the same columns in both lists. */
+  .rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  .row { position: relative; display: grid; grid-template-columns: 10rem minmax(0, 12rem) 5rem minmax(0, 1fr) 13rem 3rem; column-gap: 16px; align-items: center; min-height: 56px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  #on-their-way .row { grid-template-columns: 10rem minmax(0, 12rem) 5rem minmax(0, 1fr) 3rem; }
+  .bin { overflow-wrap: anywhere; }
+  .bin b, .card h3 { font-weight: 600; }
+  .room { color: var(--muted); }
+  .units { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .act { display: flex; align-items: center; gap: 10px; }
+  button { font: inherit; font-weight: 600; min-height: 40px; padding: 0 18px; border: 0; border-radius: 8px; background: #2b3137; color: #fff; cursor: pointer; }
+  button:hover { background: #111518; }
+  button:disabled { background: #8a939c; cursor: default; }
+  .result { font-size: 15px; }
+
+  /* "more": ids and the ERP's own words, in a panel under the row or card. */
+  .more { justify-self: end; }
+  .more > summary { list-style: none; cursor: pointer; padding: 4px 6px; border-radius: 6px; font-size: 14px; color: var(--muted); }
+  .more > summary::-webkit-details-marker { display: none; }
+  .more > summary:hover, .more[open] > summary { color: var(--text); background: var(--panel); }
+  .more > dl { position: absolute; z-index: 5; right: 0; top: calc(100% - 2px); width: min(36rem, 100%); display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; padding: 12px 16px; font-size: 14px; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgb(31 35 40 / 16%); }
+  .more dt { color: var(--muted); }
+  .more dd { margin: 0; overflow-wrap: anywhere; }
+
+  /* The bin cards: three across on a laptop, one on a phone. */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; align-items: start; }
+  .card { position: relative; padding: 14px 16px 10px; border: 1px solid var(--line); border-radius: 12px; }
+  .card.attention { border-color: #eeb5af; box-shadow: inset 4px 0 0 var(--attention); }
+  .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .card h3 { font-size: 16px; overflow-wrap: anywhere; }
+  .card h3 .room { display: block; font-weight: 400; }
+  .stock { margin-top: 10px; color: var(--muted); }
+  .stock b { font-size: 34px; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+  .refill { font-size: 14px; color: var(--muted); }
+  .card-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 32px; margin-top: 8px; }
+  .card .more > dl { left: 0; right: 0; width: auto; }
+
+  /* A card's chart: the counted stock as stairs (each count holds until the next) over a
+     light fill, its refill level (dashed) and what it should hold (dotted), dots where an
+     order was placed or a refill seen, and a stroke under it for each ERP answer. The dots
+     are HTML, so they stay round while the SVG stretches to the card's width. */
+  .trend { position: relative; margin: 10px 0 0; }
+  .trend svg { display: block; width: 100%; height: 80px; margin-bottom: 2px; overflow: visible; }
+  .trend .stock-area { fill: #eef1f4; }
+  .trend .stock-line { fill: none; stroke: #3b4650; stroke-width: 2; stroke-linejoin: miter; vector-effect: non-scaling-stroke; }
+  .trend .par { stroke: #c4cbd2; stroke-dasharray: 2 3; vector-effect: non-scaling-stroke; }
+  .trend .refill-line { stroke: var(--waiting); stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+  .trend .tick { stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+  .trend .tick.good { stroke: var(--good); }
+  .trend .tick.waiting { stroke: var(--waiting); }
+  .trend .tick.attention { stroke: var(--attention); }
+  .trend .tick.quiet { stroke: var(--quiet); }
+  .trend .dot { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; border: 2px solid #fff; box-sizing: content-box; transform: translate(-2px, -2px); }
+  .trend .dot.good { background: var(--good); }
+  .trend .dot.waiting { background: var(--waiting); }
+  .trend .dot.quiet { background: var(--quiet); }
+  .trend .dot.hollow { background: #fff; border-color: var(--quiet); }
+  .trend figcaption { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+  .trend .empty { font-size: 13px; color: var(--muted); }
+
+  /* A card's "history": what happened, newest first, under the chart. */
+  .history { margin-top: 4px; }
+  .history > summary { cursor: pointer; font-size: 14px; color: var(--muted); }
+  .history > summary:hover, .history[open] > summary { color: var(--text); }
+  .history ol { list-style: none; margin: 6px 0 0; padding: 0; font-size: 13px; }
+  .history li { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: 6px; padding: 2px 0; }
+  .history li time { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .history li span::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; vertical-align: 1px; }
+  .history li.good span::before { background: var(--good); }
+  .history li.waiting span::before { background: var(--waiting); }
+  .history li.attention span::before { background: var(--attention); }
+  .history li.quiet span::before { background: var(--quiet); }
+  footer { margin-top: 40px; color: var(--muted); font-size: 15px; }
+
+  /* On a phone a row takes two or three lines. */
+  @media (max-width: 760px) {
+    .row, #on-their-way .row { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "state bin units" "what what more" "act act act"; row-gap: 6px; }
+    .row > .state { grid-area: state; }
+    .row > .bin { grid-area: bin; }
+    .row > .units { grid-area: units; }
+    .row > .what, .row > .when { grid-area: what; }
+    .row > .act { grid-area: act; }
+    .row > .more { grid-area: more; }
+  }
+</style>
+</head>
+<body>
+{#- A time from the server, in UTC. The script rewrites its text in the browser's own time
+    zone; until then (or without JavaScript) the UTC text shows. show="time" is the time of
+    day; "short" is the time of day today and the date and time before today; "full" also
+    names the time zone. #}
+{%- macro clock(moment, show="full") -%}
+<time datetime="{{ moment.isoformat() }}" data-show="{{ show }}">
+  {{- moment.strftime("%H:%M:%S UTC" if show == "time" else "%Y-%m-%d %H:%M:%S UTC") -}}
+</time>
+{%- endmacro %}
+{%- macro chip(c) -%}
+<span class="chip {{ c.colour }}">{{ c.text }}</span>
+{%- endmacro %}
+{#- An item and its room, as the order rows name a bin. #}
+{%- macro bin(row) -%}
+<span class="bin"><b>{{ row.sku }}</b> <span class="room">{{ row.room }}</span></span>
+{%- endmacro %}
+{#- A row's or card's "more": label and value pairs for an engineer, after the time of the
+    bin's last count on a card. #}
+{%- macro more(row, last_counted=none) -%}
+<details class="more" id="{{ row.details_id }}"><summary>more</summary><dl>
+  {%- if last_counted is not none %}<dt>Last counted</dt><dd>{{ clock(last_counted) }}</dd>{% endif %}
+  {%- for label, value in row.details %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor -%}
+</dl></details>
+{%- endmacro %}
+<header>
+<div class="top">
+  <h1>Supply-room stock and orders</h1>
+  <details id="glossary"><summary>What do these words mean?</summary>
+    <div class="panel"><dl>
+      <dt><span class="sample">3 of 12</span></dt><dd>3 in the bin now; it should hold 12.</dd>
+      <dt><span class="sample small">refill at 5</span></dt><dd>At 5 or fewer the bin is low and gets an order by itself.</dd>
+      {% for c in chips %}<dt>{{ chip(c) }}</dt><dd>{{ c.meaning }}</dd>
+      {% endfor %}<dt><span class="sample button">Retry</span></dt><dd>Sends the same order again; the ERP still books it once.</dd>
+    </dl></div>
+  </details>
+</div>
+<p class="subtitle">Orders go to the ERP by themselves; you only act on <a href="#needs-a-person">Needs a person</a>.
+  <span id="updated">Updated {{ clock(updated_at, "time") }}</span></p>
+<p id="stale" class="banner" role="alert" hidden></p>
+</header>
+
+{# The script swaps in fresh copies of the elements with these ids: updated, summary,
+   needs-a-person, on-their-way, bins. Each section is always rendered, with "None" or a
+   short line when it is empty. #}
+<nav id="summary" class="summary" aria-label="Summary">
+  <a class="tile{% if needing_a_person %} attention{% endif %}" href="#needs-a-person"><b>{{ needing_a_person }}</b> Needs a person</a>
+  <a class="tile" href="#on-their-way"><b>{{ orders | length }}</b> On their way</a>
+  <a class="tile{% if low_bins %} waiting{% endif %}" href="#bins"><b>{{ low_bins }}</b> Low bins</a>
+</nav>
+
+<section id="needs-a-person">
+<h2>Needs a person</h2>
+{% if failed_orders %}
+<ul class="rows">
+  {% for row in failed_orders %}
+  <li class="row">
+    <span class="state">{{ chip(row.chip) }}</span>
+    {{ bin(row) }}
+    <span class="units">{{ row.units }} units</span>
+    <span class="what">{{ row.reason }} <span class="muted">· {{ clock(row.failed_at, "short") }}</span></span>
+    <span class="act">
+      <button data-attempt="{{ row.attempt_id }}" aria-label="Retry the order for {{ row.sku }} in {{ row.room }}">Retry</button>
+      <span class="result" id="result-{{ row.attempt_id }}" role="status"></span></span>
+    {{ more(row) }}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}<p class="none">None</p>{% endif %}
+</section>
+
+<section id="on-their-way">
+<h2>On their way</h2>
+{% if orders %}
+<ul class="rows">
+  {% for row in orders %}
+  <li class="row">
+    <span class="state">{{ chip(row.chip) }}</span>
+    {{ bin(row) }}
+    <span class="units">{{ row.units }} units</span>
+    <span class="when">{{ row.when }}{% if row.next_try_at is not none %} {{ clock(row.next_try_at, "time") }}{% endif %}</span>
+    {{ more(row) }}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}<p class="none">None</p>{% endif %}
+</section>
+
+<section id="bins">
+<h2>Bins</h2>
+{% if bins %}
+<div class="cards">
+  {% for card in bins %}
+  <article class="card {{ card.situation.chip.colour }}">
+    <div class="card-head">
+      <h3 class="title">{{ card.sku }} <span class="room">{{ card.room }}</span></h3>
+      {{ chip(card.situation.chip) }}
+    </div>
+    <p class="stock"><b>{{ card.stock_now }}</b> of {{ card.should_hold }}</p>
+    <p class="refill">refill at {{ card.refill_at }}</p>
+    {%- set h = card.history %}
+    <figure class="trend">
+      {%- if h.line %}
+      <svg viewBox="0 0 240 80" preserveAspectRatio="none" role="img" aria-label="Stock of {{ card.sku }} over the last {{ h.minutes }} minutes">
+        <path class="stock-area" d="{{ h.area }}"/>
+        <line class="par" x1="0" x2="240" y1="{{ h.par_y }}" y2="{{ h.par_y }}"/>
+        <line class="refill-line" x1="0" x2="240" y1="{{ h.refill_y }}" y2="{{ h.refill_y }}"/>
+        <path class="stock-line" d="{{ h.line }}"/>
+        {%- for t in h.ticks %}<line class="tick {{ t.colour }}" x1="{{ t.x }}" x2="{{ t.x }}" y1="74" y2="80"/>{% endfor %}
+      </svg>
+      {%- for m in h.marks %}<span class="dot {{ m.colour }}{% if m.hollow %} hollow{% endif %}" style="left: {{ (m.x / 240 * 100) | round(2) }}%; top: {{ m.y }}px"></span>{% endfor %}
+      <figcaption>{{ clock(h.start, "time") }}<span>last {{ h.minutes }} min</span>{{ clock(h.end, "time") }}</figcaption>
+      {%- else %}<p class="empty">No counts in the last {{ h.minutes }} minutes</p>{% endif %}
+    </figure>
+    <details class="history" id="{{ h.details_id }}"><summary>history</summary>
+      {%- if h.lines %}<ol>
+        {%- for line in h.lines %}<li class="{{ line.colour }}">{{ clock(line.at, "time") }}<span>{{ line.text }}</span></li>{% endfor %}
+      </ol>{% else %}<ol><li class="quiet"><span>Only counts in the last 30 minutes</span></li></ol>{% endif %}
+    </details>
+    <div class="card-foot">
+      <p class="note">{{ card.note }}</p>
+      {{ more(card, card.last_counted) }}
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}<p class="none">No bins counted yet.</p>{% endif %}
+</section>
+
+<footer>For engineers: <a href="/docs">API docs</a> · <a href="/health/ready">health</a></footer>
+
+<script>
+  // The page refreshes every 1.5 seconds: it fetches itself again (GET /) and swaps in the
+  // new copy of each of these elements. Everything else, such as an open glossary, stays as
+  // it is. One GET / per interval per open browser is fine for an operations page with a
+  // handful of viewers.
+  const SECTIONS = ["updated", "summary", "needs-a-person", "on-their-way", "bins"]
+  const PAGE_VERSION = document.querySelector('meta[name="page-version"]').content
+  const REFRESH_MS = 1500
+  // The refresh after a Retry click, sooner than the next regular one.
+  const CLICK_REFRESH_MS = 1000
+  // How long a Retry answer stays on screen at least. A refresh can take the order out of
+  // "Needs a person" a second after the click; until ANSWER_MS has passed I keep its old
+  // row, button disabled, at the top of the list, so the answer can still be read.
+  const ANSWER_MS = 4000
+
+  // What the page says next to a Retry button, picked by the "result" field of the retry
+  // endpoint's answer, or by its "error" field when it refuses an order whose bin has had a
+  // newer order since (the button can still be on screen until the next refresh). Any other
+  // answer is an error, and the page shows its message.
+  const MESSAGES = {
+    scheduled: "Retry queued.",
+    already_scheduled: "Already queued.",
+    already_delivered: "Already delivered.",
+    superseded: "Superseded by a newer order.",
+  }
+
+  // The server writes every time in UTC. I show each one in the browser's own time zone, so
+  // staff read the time on their own clock.
+  const TIME = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric", minute: "2-digit", second: "2-digit",
+  })
+  const DAY_AND_TIME = new Intl.DateTimeFormat(undefined, {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  })
+  const FULL = new Intl.DateTimeFormat(undefined, {
+    year: "numeric", month: "short", day: "numeric",
+    hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short",
+  })
+
+  function showLocalTimes() {
+    const today = new Date().toDateString()
+    for (const element of document.querySelectorAll("time[datetime]")) {
+      const moment = new Date(element.dateTime)
+      let format = FULL
+      if (element.dataset.show === "time") format = TIME
+      if (element.dataset.show === "short") {
+        format = moment.toDateString() === today ? TIME : DAY_AND_TIME
+      }
+      element.textContent = format.format(moment)
+    }
+  }
+
+  // What each Retry click got back, by attempt id: {text, until}, until being the time
+  // before which it stays on screen whatever happens to its order. A refresh replaces the
+  // rows, so it writes the answer again next to a button that is still there (after an
+  // error, say); once the order has moved on and ANSWER_MS has passed, its row and the
+  // answer go.
+  const answers = new Map()
+
+  // Put back the old row of an order that has left "Needs a person" while its Retry answer
+  // must still show.
+  function keepRow(row) {
+    const section = document.getElementById("needs-a-person")
+    let list = section.querySelector("ul.rows")
+    if (!list) {
+      list = document.createElement("ul")
+      list.className = "rows"
+      section.querySelector("p.none").replaceWith(list)
+    }
+    const button = row.querySelector("button")
+    if (button) button.disabled = true
+    list.prepend(row)
+  }
+
+  function showAnswer(id, text) {
+    const slot = document.getElementById("result-" + id)
+    if (slot) slot.textContent = text
+    return slot !== null
+  }
+
+  // When the first failed refresh in a row happened, as text, or null while refreshes work.
+  let staleSince = null
+
+  // The page should not jump when rows appear above what the reader is looking at. Before
+  // the swap, note the first row or card still on screen (by its "more" id, which stays the
+  // same across refreshes) and where it is; after it, scroll by however far it moved.
+  function topAnchor() {
+    if (window.scrollY === 0) return null  // at the top, let new rows show
+    for (const item of document.querySelectorAll(".row, .card")) {
+      const top = item.getBoundingClientRect().top
+      if (item.getBoundingClientRect().bottom > 0) return { id: item.querySelector("details.more").id, top }
+    }
+    return null
+  }
+
+  function keepPlace(place) {
+    const item = place && document.getElementById(place.id)?.closest(".row, .card")
+    if (item) window.scrollBy(0, item.getBoundingClientRect().top - place.top)
+  }
+
+  async function refresh() {
+    try {
+      const response = await fetch("/", { headers: { Accept: "text/html" } })
+      if (!response.ok) throw new Error("the server answered HTTP " + response.status)
+      const doc = new DOMParser().parseFromString(await response.text(), "text/html")
+      // A new version of the page (after a deploy): swapping sections would keep this old
+      // script and styles, so load the whole page again instead.
+      const version = doc.querySelector('meta[name="page-version"]')
+      if (version && version.content !== PAGE_VERSION) {
+        location.reload()
+        return
+      }
+      const fresh = SECTIONS.map((id) => doc.getElementById(id))
+      if (fresh.includes(null)) throw new Error("the answer was not this page")
+      // Note which "more" are open, to open them again after the swap.
+      const opened = []
+      for (const element of document.querySelectorAll("details.more[open], details.history[open]")) opened.push(element.id)
+      // The rows of answers younger than ANSWER_MS whose order is no longer in the list.
+      const kept = []
+      for (const [id, answer] of answers) {
+        const slot = document.getElementById("result-" + id)
+        if (slot && Date.now() < answer.until && !doc.getElementById("result-" + id)) {
+          kept.push(slot.closest("li"))
+        }
+      }
+      const place = topAnchor()
+      SECTIONS.forEach((id, i) => document.getElementById(id).replaceWith(fresh[i]))
+      kept.reverse().forEach(keepRow)
+      for (const id of opened) {
+        const element = document.getElementById(id)
+        if (element) element.open = true
+      }
+      for (const [id, answer] of answers) {
+        if (!showAnswer(id, answer.text)) answers.delete(id)
+      }
+      showLocalTimes()
+      showStale(null)
+      keepPlace(place)
+    } catch (err) {
+      // fetch() rejects with a TypeError when the server cannot be reached at all.
+      if (err instanceof TypeError) {
+        showStale("network error: " + err.message)
+      } else {
+        showStale(err.message)
+      }
+    }
+  }
+
+  // I say so when a refresh fails: numbers that silently stop changing look like a quiet
+  // supply room, not like a page that lost its server. reason is the technical cause, or
+  // null once a refresh has worked again.
+  function showStale(reason) {
+    const banner = document.getElementById("stale")
+    document.body.classList.toggle("stale", reason !== null)
+    banner.hidden = reason === null
+    if (reason === null) {
+      staleSince = null
+      banner.textContent = ""
+      banner.title = ""
+      return
+    }
+    if (staleSince === null) {
+      staleSince = TIME.format(new Date())  // the first failure in a row
+    }
+    banner.textContent = "No contact with the server since " + staleSince + ". Tell IT if this lasts."
+    banner.title = "Technical reason: " + reason  // shown when an engineer points at it
+  }
+
+  // A Retry click asks the server to send that failed order again. The answer shows next to
+  // the button for at least ANSWER_MS, and the page refreshes CLICK_REFRESH_MS after it to
+  // show the new state. One listener on the whole document, because each refresh replaces
+  // the Retry buttons and a listener on a button would be lost with it.
+  document.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-attempt]")
+    if (!button) return
+    const id = button.dataset.attempt
+    button.disabled = true
+    showAnswer(id, "Sending…")
+    let message
+    try {
+      const response = await fetch("/api/v1/outbound-attempts/" + id + "/retry", { method: "POST" })
+      // An answer that is not JSON (a proxy's error page, say) counts as an empty one, so
+      // the message below still shows its HTTP status.
+      const body = await response.json().catch(() => ({}))
+      message = MESSAGES[body.result] || MESSAGES[body.error]
+      if (!message) {
+        message = "Could not retry: " + (body.message || "HTTP " + response.status)
+      }
+    } catch {
+      // fetch() rejects when the server cannot be reached at all; an extra press does no
+      // harm once it can.
+      message = "Could not reach the server."
+    }
+    answers.set(id, { text: message, until: Date.now() + ANSWER_MS })
+    showAnswer(id, message)
+    setTimeout(refresh, CLICK_REFRESH_MS)
+  })
+
+  showLocalTimes()
+  setInterval(refresh, REFRESH_MS)
+</script>
+</body>
+</html>
