@@ -1,0 +1,110 @@
+# Local topology: PostgreSQL 16 + the app (API, page, worker and mock ERP in one process).
+# Credentials here are local-development placeholders, not secrets.
+#
+# `docker compose up` starts only db and app. The living demo (`make demo-up`) adds the
+# profile "demo": an ERP simulator and a gateway simulator, each in its own container, and
+# points the app at the simulated ERP through DEMO_ERP_URL and DEMO_ERP_MOCK_ENABLED. The
+# Makefile sets both; without them the app keeps its in-app mock, as in the plain stack.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: restock
+      POSTGRES_PASSWORD: restock
+      POSTGRES_DB: restock
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/10-test-database.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Over TCP, the way the app connects: on first start the image runs a temporary server
+      # that listens only on the Unix socket while it creates the databases.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U restock -d restock"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://restock:restock@db:5432/restock
+      # No default: compose refuses to start without it, and the app refuses change-me.
+      WEBHOOK_SECRET: "${WEBHOOK_SECRET:?set WEBHOOK_SECRET, e.g. WEBHOOK_SECRET=assessment-secret make compose-up}"
+      # The in-app mock is this stack's ERP; `make demo-up` swaps in the erp service below.
+      ERP_URL: "${DEMO_ERP_URL:-http://127.0.0.1:8000/mock-erp}"
+      ERP_MOCK_ENABLED: "${DEMO_ERP_MOCK_ENABLED:-true}"
+      LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    # The container migrates on every start (Dockerfile CMD); it is healthy once it is ready.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health/ready", timeout=8)
+      interval: 5s
+      timeout: 10s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
+
+  # The living demo's ERP: the mock ERP alone, answering badly on purpose now and then.
+  erp:
+    profiles: [demo]
+    build: .
+    command: ["restock", "erp-sim", "--host", "0.0.0.0", "--port", "8090"]
+    environment:
+      ERP_SIM_FAULT_RATE: "${ERP_SIM_FAULT_RATE:-0.2}"
+      LOG_LEVEL: INFO
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8090/", timeout=5)
+      interval: 5s
+      timeout: 6s
+      retries: 6
+    restart: unless-stopped
+
+  # The living demo's gateway: six bins, a signed count for each every 10 seconds.
+  gateway:
+    profiles: [demo]
+    build: .
+    command:
+      - python
+      - scripts/gateway_sim.py
+      - --url
+      - http://app:8000
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8081"
+    environment:
+      WEBHOOK_SECRET: "${WEBHOOK_SECRET:?set WEBHOOK_SECRET, e.g. WEBHOOK_SECRET=assessment-secret make demo-up}"
+    ports:
+      - "8081:8081"
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8081/state", timeout=5)
+      interval: 5s
+      timeout: 6s
+      retries: 6
+    restart: unless-stopped
+
+volumes:
+  pgdata:

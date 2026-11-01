@@ -1,0 +1,9 @@
+.venv
+.git
+.env
+restock.db*
+**/__pycache__
+.pytest_cache
+.ruff_cache
+# The image has no test tools (requirements-dev.txt), so the tests stay out too.
+tests
